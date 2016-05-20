@@ -38,57 +38,50 @@ public class ResourceTestRule implements TestRule {
      */
     public static class Builder {
 
-        private final Set<Object> singletons = new HashSet<>();
-        private final Set<Class<?>> providers = new HashSet<>();
-        private final Map<String, Object> properties = new HashMap<>();
-        private ObjectMapper mapper = Jackson.newObjectMapper();
-        private Validator validator = Validators.newValidator();
-        private Consumer<ClientConfig> clientConfigurator = c -> {};
-        private TestContainerFactory testContainerFactory = new InMemoryTestContainerFactory();
-        private boolean registerDefaultExceptionMappers = true;
+        private final ResourceTestJerseyConfiguration.Builder builder = ResourceTestJerseyConfiguration.builder();
 
         public Builder setMapper(ObjectMapper mapper) {
-            this.mapper = mapper;
+            builder.setMapper(mapper);
             return this;
         }
 
         public Builder setValidator(Validator validator) {
-            this.validator = validator;
+            builder.setValidator(validator);
             return this;
         }
 
         public Builder setClientConfigurator(Consumer<ClientConfig> clientConfigurator) {
-            this.clientConfigurator = clientConfigurator;
+            builder.setClientConfigurator(clientConfigurator);
             return this;
         }
 
         public Builder addResource(Object resource) {
-            singletons.add(resource);
+            builder.addResource(resource);
             return this;
         }
 
         public Builder addProvider(Class<?> klass) {
-            providers.add(klass);
+            builder.addProvider(klass);
             return this;
         }
 
         public Builder addProvider(Object provider) {
-            singletons.add(provider);
+            builder.addProvider(provider);
             return this;
         }
 
         public Builder addProperty(String property, Object value) {
-            properties.put(property, value);
+            builder.addProperty(property, value);
             return this;
         }
 
         public Builder setTestContainerFactory(TestContainerFactory factory) {
-            this.testContainerFactory = factory;
+            builder.setTestContainerFactory(factory);
             return this;
         }
 
         public Builder setRegisterDefaultExceptionMappers(boolean value) {
-            registerDefaultExceptionMappers = value;
+            builder.setRegisterDefaultExceptionMappers(value);
             return this;
         }
 
@@ -98,9 +91,7 @@ public class ResourceTestRule implements TestRule {
          * @return a new {@link ResourceTestRule}
          */
         public ResourceTestRule build() {
-            return new ResourceTestRule(new ResourceTestJerseyConfiguration(
-                singletons, providers, properties, mapper, validator,
-                clientConfigurator, testContainerFactory, registerDefaultExceptionMappers));
+            return new ResourceTestRule(builder.build());
         }
     }
 
@@ -113,8 +104,8 @@ public class ResourceTestRule implements TestRule {
         return new Builder();
     }
 
-    private ResourceTestJerseyConfiguration configuration;
-    private JerseyTest test;
+    private final ResourceTestJerseyConfiguration configuration;
+    private ResourceTestHelper resourceTestHelper;
 
     private ResourceTestRule(ResourceTestJerseyConfiguration configuration) {
         this.configuration = configuration;
@@ -133,11 +124,11 @@ public class ResourceTestRule implements TestRule {
     }
 
     public Client client() {
-        return test.client();
+        return resourceTestHelper.client();
     }
 
     public JerseyTest getJerseyTest() {
-        return test;
+        return resourceTestHelper.getJerseyTest();
     }
 
     @Override
@@ -145,36 +136,12 @@ public class ResourceTestRule implements TestRule {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                DropwizardTestResourceConfig.CONFIGURATION_REGISTRY.put(configuration.getId(), configuration);
+                resourceTestHelper = new ResourceTestHelper(configuration);
                 try {
-                    test = new JerseyTest() {
-                        @Override
-                        protected TestContainerFactory getTestContainerFactory() {
-                            return configuration.testContainerFactory;
-                        }
-
-                        @Override
-                        protected DeploymentContext configureDeployment() {
-                            return ServletDeploymentContext.builder(new DropwizardTestResourceConfig(configuration))
-                                    .initParam(ServletProperties.JAXRS_APPLICATION_CLASS,
-                                            DropwizardTestResourceConfig.class.getName())
-                                    .initParam(DropwizardTestResourceConfig.CONFIGURATION_ID, configuration.getId())
-                                    .build();
-                        }
-
-                        @Override
-                        protected void configureClient(ClientConfig clientConfig) {
-                            final JacksonJsonProvider jsonProvider = new JacksonJsonProvider();
-                            jsonProvider.setMapper(configuration.mapper);
-                            configuration.clientConfigurator.accept(clientConfig);
-                            clientConfig.register(jsonProvider);
-                        }
-                    };
-                    test.setUp();
                     base.evaluate();
-                } finally {
-                    DropwizardTestResourceConfig.CONFIGURATION_REGISTRY.remove(configuration.getId());
-                    test.tearDown();
+                }
+                finally {
+                    resourceTestHelper.close();
                 }
             }
         };
